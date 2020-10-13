@@ -6,6 +6,26 @@
 #pragma warning(disable:4244)
 
 
+vec3 AInterpolatorVec3::LERP(vec3 a, vec3 b, double u)
+{
+	return a * (1 - u) + b * u;
+}
+
+// Reference: https://stackoverflow.com/questions/28036652/finding-the-shortest-distance-between-two-angles/28037434
+vec3 AInterpolatorVec3::ShortestPathEuler(vec3 angle0, vec3 angle1)
+{
+	double xAngle = std::fmod(angle1[0] - angle0[0] + 180.0, 360.0) - 180.0;
+	xAngle = xAngle < -180.0 ? xAngle + 360.0 : xAngle;
+
+	double yAngle = std::fmod(angle1[1] - angle0[1] + 180.0, 360.0) - 180.0;
+	yAngle = yAngle < -180.0 ? yAngle + 360.0 : yAngle;
+
+	double zAngle = std::fmod(angle1[2] - angle0[2] + 180.0, 360.0) - 180.0;
+	zAngle = zAngle < -180.0 ? zAngle + 360.0 : zAngle;
+
+	return vec3(xAngle, yAngle, zAngle);
+}
+
 ASplineVec3::ASplineVec3() : mInterpolator(new ABernsteinInterpolatorVec3())
 {
 }
@@ -216,6 +236,20 @@ vec3 ASplineVec3::getValue(double t) const
 void ASplineVec3::cacheCurve()
 {
     mInterpolator->interpolate(mKeys, mCtrlPoints, mCachedCurve);
+	if (mInterpolator->getType() == ASplineVec3::CUBIC_HERMITE)
+	{
+		std::vector<vec3> reworkCtrlPoints = std::vector<vec3>();
+		for (int i = 2; i < mCtrlPoints.size(); i += 4)
+		{
+			reworkCtrlPoints.push_back(mCtrlPoints[i]);
+		}
+		reworkCtrlPoints.push_back(mCtrlPoints[mCtrlPoints.size() - 1]);
+		mCtrlPoints.clear();
+		for (int i = 0; i < reworkCtrlPoints.size(); ++i)
+		{
+			mCtrlPoints.push_back(reworkCtrlPoints[i]);
+		}
+	}
 }
 
 void ASplineVec3::computeControlPoints(bool updateEndPoints)
@@ -293,6 +327,7 @@ void AInterpolatorVec3::interpolate(const std::vector<ASplineVec3::Key>& keys,
 			// TODO: Compute u, fraction of duration between segment and segmentnext, for example,
 			// u = 0.0 when t = keys[segment-1].first  
 			// u = 1.0 when t = keys[segment].first
+			u = t - keys[segment].first;
 
             val = interpolateSegment(keys, ctrlPoints, segment, u);
             curve.push_back(val);
@@ -319,6 +354,7 @@ vec3 ALinearInterpolatorVec3::interpolateSegment(
 	vec3 key1 = keys[segment + 1].second;
 
 	// TODO: Linear interpolate between key0 and key1 so that u = 0 returns key0 and u = 1 returns key1
+	curveValue = LERP(key0, key1, u);
 	return curveValue;
 }
 
@@ -335,6 +371,16 @@ vec3 ABernsteinInterpolatorVec3::interpolateSegment(
 	// TODO: 
 	// Step1: Get the 4 control points, b0, b1, b2 and b3 from the ctrlPoints vector
 	// Step2: Compute the interpolated value f(u) point using  Bernstein polynomials
+
+	b0 = ctrlPoints[4 * segment];
+	b1 = ctrlPoints[4 * segment + 1];
+	b2 = ctrlPoints[4 * segment + 2];
+	b3 = ctrlPoints[4 * segment + 3];
+
+	curveValue = (b0 * (1 - u) * (1 - u) * (1 - u)) +
+				 (b1 * 3.f * u * (1 - u) * (1 - u)) +
+				 (b2 * 3.f * u * u * (1 - u)) +
+				 (b3 * u * u * u);
 
 	return curveValue;
 }
@@ -353,6 +399,20 @@ vec3 ACasteljauInterpolatorVec3::interpolateSegment(
 	// TODO: 
 	// Step1: Get the 4 control points, b0, b1, b2 and b3 from the ctrlPoints vector
 	// Step2: Compute the interpolated value f(u) point using  deCsteljau alogithm
+
+	b0 = ctrlPoints[4 * segment];
+	b1 = ctrlPoints[4 * segment + 1];
+	b2 = ctrlPoints[4 * segment + 2];
+	b3 = ctrlPoints[4 * segment + 3];
+
+	vec3 b01 = LERP(b0, b1, u);
+	vec3 b12 = LERP(b1, b2, u);
+	vec3 b23 = LERP(b2, b3, u);
+
+	vec3 b01_12 = LERP(b01, b12, u);
+	vec3 b12_23 = LERP(b12, b23, u);
+
+	curveValue = LERP(b01_12, b12_23, u);
 
 	return curveValue;
 }
@@ -373,6 +433,29 @@ vec3 AMatrixInterpolatorVec3::interpolateSegment(
 	// Step2: Compute the interpolated value f(u) point using  matrix method f(u) = GMU
 	// Hint: Using Eigen::MatrixXd data representations for a matrix operations
 
+	b0 = ctrlPoints[4 * segment];
+	b1 = ctrlPoints[4 * segment + 1];
+	b2 = ctrlPoints[4 * segment + 2];
+	b3 = ctrlPoints[4 * segment + 3];
+
+	Eigen::MatrixXd G(3, 4);
+	G << b0[0], b1[0], b2[0], b3[0],
+		 b0[1], b1[1], b2[1], b3[1],
+		 b0[2], b1[2], b2[2], b3[2];
+
+	Eigen::MatrixXd M(4, 4);
+	M << 1.0, -3.0, 3.0, -1.0,
+		 0.0, 3.0, -6.0, 3.0,
+		 0.0, 0.0, 3.0, -3.0,
+		 0.0, 0.0, 0.0, 1.0;
+
+	Eigen::MatrixXd U(4, 1);
+	U << 1.0, u, u*u, u*u*u;
+
+	Eigen::MatrixXd F = G * M * U;
+
+	curveValue = vec3(F(0, 0), F(1, 0), F(2, 0));
+
 	return curveValue;
 }
 
@@ -388,6 +471,16 @@ vec3 AHermiteInterpolatorVec3::interpolateSegment(
 	vec3 curveValue(0, 0, 0);
 
 	// TODO: Compute the interpolated value h(u) using a cubic Hermite polynomial  
+
+	p0 = ctrlPoints[4 * segment];
+	p1 = ctrlPoints[4 * segment + 1];
+	q0 = ctrlPoints[4 * segment + 2];
+	q1 = ctrlPoints[4 * segment + 3];
+
+	curveValue = p0 * (2.0 * u * u * u - 3.0 * u * u + 1.0) +
+				 p1 * (-2.0 * u * u * u + 3.0 * u * u) +
+				 q0 * (u * u * u - 2.0 * u * u + u) +
+				 q1 * (u * u * u - u * u);
 
 	return curveValue;
 }
@@ -426,6 +519,31 @@ void ACubicInterpolatorVec3::computeControlPoints(
         vec3 b0, b1, b2, b3;
 		// TODO: compute b0, b1, b2, b3
 
+		vec3 s0, s1;
+
+		if (i != 1)
+		{
+			s0 = (keys[i].second - keys[i - 2].second) * 0.5f;
+		}
+		else
+		{
+			s0 = (keys[i].second - startPoint) * 0.5f;
+		}
+		if (i != keys.size() - 1)
+		{
+			s1 = (keys[i + 1].second - keys[i - 1].second) * 0.5f;
+		}
+		else
+		{
+			s1 = (endPoint - keys[i - 1].second) * 0.5f;
+		}
+
+		b0 = keys[i - 1].second;
+		b3 = keys[i].second;
+
+		b1 = b0 + s0 / 3;
+		b2 = b3 - s1 / 3;
+
         ctrlPoints.push_back(b0);
         ctrlPoints.push_back(b1);
         ctrlPoints.push_back(b2);
@@ -439,7 +557,7 @@ void AHermiteInterpolatorVec3::computeControlPoints(
     vec3& startPoint, vec3& endPoint)
 {
 	ctrlPoints.clear();
-	ctrlPoints.resize(keys.size(), vec3(0, 0, 0));
+	//ctrlPoints.resize(keys.size(), vec3(0, 0, 0));
 	if (keys.size() <= 1) return;
 
 	// TODO: 
@@ -451,15 +569,53 @@ void AHermiteInterpolatorVec3::computeControlPoints(
 	// For natural endpoints, set 2nd derivative at first and last points (p0 and pm) equal to 0
 
 	// Step 1: Initialize A
+	Eigen::MatrixXd A = Eigen::MatrixXd::Zero(keys.size(), keys.size());
+	A(0, 0) = 2.0;
+	A(0, 1) = 1.0;
+	A(keys.size() - 1, keys.size() - 1) = 2.0;
+	A(keys.size() - 1, keys.size() - 2) = 1.0;
+
+	for (int i = 1; i < keys.size() - 1; ++i)
+	{
+		A(i, i - 1) = 1.0;
+		A(i, i) = 4.0;
+		A(i, i + 1) = 1.0;
+	}
+
+	//std::cout << "Here is the matrix A:\n" << A << std::endl;
+
 	// Step 2: Initialize D
+	Eigen::MatrixXd D = Eigen::MatrixXd(keys.size(), 3);
+	D(0, 0) = 3.0 * (keys[1].second[0] - keys[0].second[0]);
+	D(0, 1) = 3.0 * (keys[1].second[1] - keys[0].second[1]);
+	D(0, 2) = 3.0 * (keys[1].second[2] - keys[0].second[2]);
+	D(keys.size() - 1, 0) = 3.0 * (keys[keys.size() - 1].second[0] - keys[keys.size() - 2].second[0]);
+	D(keys.size() - 1, 1) = 3.0 * (keys[keys.size() - 1].second[1] - keys[keys.size() - 2].second[1]);
+	D(keys.size() - 1, 2) = 3.0 * (keys[keys.size() - 1].second[2] - keys[keys.size() - 2].second[2]);
+	for (int i = 1; i < keys.size() - 1; ++i)
+	{
+		D(i, 0) = 3.0 * (keys[i + 1].second[0] - keys[i - 1].second[0]);
+		D(i, 1) = 3.0 * (keys[i + 1].second[1] - keys[i - 1].second[1]);
+		D(i, 2) = 3.0 * (keys[i + 1].second[2] - keys[i - 1].second[2]);
+	}
+
+	//std::cout << "Here is the matrix D:\n" << D << std::endl;
+
 	// Step 3: Solve AC=D for C
+
+	Eigen::MatrixXd C = A.inverse() * D;
+
+	//std::cout << "Here is the matrix C:\n" << C << std::endl;
+
 	// Step 4: Save control points in ctrlPoints
 
-	// Control Points: [p0_prime, p1_prime, p2_prime, ..., pm_prime]
-	// The size of control points should be the same as the size of the keys
-	// Use operator[] to set elements in ctrlPoints by indices
-	// Do not use push_back() since the vector has been resized
-
+	for (int i = 0; i < keys.size() - 1; ++i)
+	{
+		ctrlPoints.push_back(keys[i].second);
+		ctrlPoints.push_back(keys[i+1].second);
+		ctrlPoints.push_back(vec3(C(i, 0), C(i, 1), C(i, 2)));
+		ctrlPoints.push_back(vec3(C(i+1, 0), C(i+1, 1), C(i+1, 2)));
+	}
 }
 
 void ABSplineInterpolatorVec3::computeControlPoints(
@@ -493,8 +649,6 @@ void ABSplineInterpolatorVec3::computeControlPoints(
 	// Step 4: Solve AC=D for C 
 
 	// Step 5: save control points in ctrlPoints
-
-	// Do not use push_back() since the vector has been resized
 }
 
 
@@ -510,6 +664,10 @@ vec3 AEulerLinearInterpolatorVec3::interpolateSegment(
 	// TODO:
 	// Linear interpolate between key0 and key1
 	// You should convert the angles to find the shortest path for interpolation
+
+	key1 = key0 + ShortestPathEuler(key0, key1);
+
+	curveValue = LERP(key0, key1, u);
 
 	return curveValue;
 }
@@ -528,6 +686,16 @@ vec3 AEulerCubicInterpolatorVec3::interpolateSegment(
 	// Step2: Compute the interpolated value f(u) point using  Bernstein polynomials
 	// You should convert the angles to find the shortest path for interpolation
 
+	b0 = ctrlPoints[4 * segment];
+	b1 = ctrlPoints[4 * segment + 1];
+	b2 = ctrlPoints[4 * segment + 2];
+	b3 = ctrlPoints[4 * segment + 3];
+
+	curveValue = (b0 * (1 - t) * (1 - t) * (1 - t)) +
+		(b1 * 3.f * t * (1 - t) * (1 - t)) +
+		(b2 * 3.f * t * t * (1 - t)) +
+		(b3 * t * t * t);
+
 	return curveValue;
 }
 
@@ -541,11 +709,44 @@ void AEulerCubicInterpolatorVec3::computeControlPoints(
 	// Hint: One naive way is to first convert the keys such that the differences of the x, y, z Euler angles 
 	//		 between every two adjacent keys are less than 180 degrees respectively 
 
+	std::vector<vec3> convertedKeys = std::vector<vec3>();
+	convertedKeys.push_back(keys[0].second);
+
+	for (int i = 1; i < keys.size(); i++)
+	{
+		convertedKeys.push_back(convertedKeys[i - 1] + ShortestPathEuler(convertedKeys[i - 1], keys[i].second));
+	}
+
 	for (int i = 1; i < keys.size(); i++)
 	{
 		vec3 b0, b1, b2, b3;
 
 		// TODO: compute b0, b1, b2, b3
+
+		vec3 s0, s1;
+
+		if (i != 1)
+		{
+			s0 = (convertedKeys[i] - convertedKeys[i - 2]) * 0.5f;
+		}
+		else
+		{
+			s0 = convertedKeys[i] - convertedKeys[i - 1];
+		}
+		if (i != keys.size() - 1)
+		{
+			s1 = (convertedKeys[i + 1] - convertedKeys[i - 1]) * 0.5f;
+		}
+		else
+		{
+			s1 = convertedKeys[i] - convertedKeys[i - 1];
+		}
+
+		b0 = convertedKeys[i - 1];
+		b3 = convertedKeys[i];
+
+		b1 = b0 + s0 / 3;
+		b2 = b3 - s1 / 3;
 
 		ctrlPoints.push_back(b0);
 		ctrlPoints.push_back(b1);

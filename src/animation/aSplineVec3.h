@@ -69,6 +69,9 @@ protected:
 class AInterpolatorVec3
 {
 public:
+	vec3 LERP(vec3 a, vec3 b, double u);
+	vec3 ShortestPathEuler(vec3 angle0, vec3 angle1);
+
     virtual ~AInterpolatorVec3() {}
     ASplineVec3::InterpolationType getType() const { return mType;  }
 
