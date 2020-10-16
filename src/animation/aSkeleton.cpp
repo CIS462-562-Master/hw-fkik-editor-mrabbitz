@@ -128,6 +128,10 @@ void ASkeleton::update()
 
 	// TODO: Update Joint Transforms recursively, starting at the root
 
+	// From Piazza:
+	// In ASkeleton::update(), "Update joint transforms recursively" means you can use DFS to traverse the joints, from the root joint to all end joints. 
+
+	mRoot->updateTransform();
 }
 
 AJoint* ASkeleton::getJointByName(const std::string& name) const

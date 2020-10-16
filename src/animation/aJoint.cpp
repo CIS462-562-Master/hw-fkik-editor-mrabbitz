@@ -211,9 +211,27 @@ const mat3& AJoint::getGlobalRotation() const
 
 void AJoint::updateTransform()
 {
+	// From Piazza:
+	// In AJoint::updateTransform(), you can check mParent.
+	// If it is a nullptr, you can directly use the mLocal2Parent as the mLocal2Global.
+	// Otherwise, you need to consider how the mLocal2Global is calculated by mParent and the mLocal2Parent
+
 	// TODO: Compute mLocal2Global, which transforms from local coordinates to world coordinates
-	mLocal2Global = ATransform();
+
+	if (!mParent)
+	{
+		mLocal2Global = mLocal2Parent;
+	}
+	else
+	{
+		mLocal2Global = mParent->getLocal2Global() * mLocal2Parent;
+	}
+
 	// TODO: Update children
+	for (AJoint* child : mChildren)
+	{
+		child->updateTransform();
+	}
 }
 
 void AJoint::Attach(AJoint* pParent, AJoint* pChild)
