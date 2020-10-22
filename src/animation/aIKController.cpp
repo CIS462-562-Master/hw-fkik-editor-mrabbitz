@@ -133,7 +133,40 @@ AIKchain IKController::createIKchain(int endJointID, int desiredChainSize, ASkel
 	// add the corresponding skeleton joint pointers to the AIKChain "chain" data member starting with the end joint
 	// desiredChainSize = -1 should create an IK chain of maximum length (where the last chain joint is the joint before the root joint)
 	// also add weight values to the associated AIKChain "weights" data member which can be used in a CCD IK implemention
-	return AIKchain();
+
+	if (desiredChainSize == -1)
+	{
+		desiredChainSize = INT_MAX;
+	}
+
+	AIKchain ikChain;
+
+	if (desiredChainSize > 0)
+	{
+		std::vector<AJoint*> chain;
+		std::vector<double> weights;
+
+		int counter = 0;
+		AJoint *rootNode = m_pSkeleton->getRootNode();
+		AJoint *joint = m_pSkeleton->getJointByID(endJointID);
+
+		while (counter < desiredChainSize)
+		{
+			chain.push_back(joint);
+			weights.push_back(0.1);
+			++counter;
+
+			joint = joint->getParent();
+			if (joint == rootNode)
+			{
+				break;
+			}
+		}
+		ikChain.setChain(chain);
+		ikChain.setWeights(weights);
+	}
+
+	return ikChain;
 }
 
 
