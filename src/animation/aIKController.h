@@ -61,11 +61,13 @@ public:
 
 	int createLimbIKchains();
 	int createCCDIKchains();
+	int createPseudoIKchains();
 
 	AIKchain createIKchain(int endJointID, int desiredChainSize, ASkeleton* pSkeleton);
 
 	int computeLimbIK(ATarget target, AIKchain& IKchain, const vec3 axis, ASkeleton* pIKSkeleton);
-	int computeCCDIK(ATarget target, AIKchain&, ASkeleton* pIKSkeleton);
+	int computeCCDIK(ATarget target, AIKchain& IKchain, ASkeleton* pIKSkeleton);
+	int computePseudoIK(ATarget target, AIKchain& IKchain, ASkeleton* pIKSkeleton);
 
 	enum EndJointIndex { ROOT, LHAND, RHAND, LFOOT, RFOOT } mEndJointIndex;
 	enum IKType { LIMB, CCD, PSEDUOINV };
@@ -85,8 +87,8 @@ protected:
 	ASkeleton mIKSkeleton, mIKSkeleton1, mIKSkeleton2;
 
 	bool mValidChain = true;
-	bool mvalidLimbIKchains;
-	bool mvalidCCDIKchains;
+	//bool mvalidLimbIKchains;
+	//bool mvalidCCDIKchains;
 
     AIKchain mRhandIKchain; // IK chain of joint pointers starting with Rhand joint 
 	AIKchain mLhandIKchain; // IK chain of joint pointers starting with Lhand joint     
@@ -121,6 +123,9 @@ protected:
 public:
     static double gIKEpsilon;
     static int gIKmaxIterations;
+	bool mvalidLimbIKchains;
+	bool mvalidCCDIKchains;
+	bool mvalidPseudoIKchains;
 };
 
 #endif

@@ -33,7 +33,8 @@ public:
 
 
 	const AJoint& getGuideJoint() const { return m_Guide; }
-	void resetGuide() { m_Guide.setGlobalRotation(IdentityMat3); m_Guide.setGlobalTranslation(vec3(0)); }
+	void resetGuide() { m_Guide.setGlobalRotation(IdentityMat3); m_Guide.setGlobalTranslation(vec3(0)); m_IKController->mvalidCCDIKchains = false; m_IKController->mvalidLimbIKchains = false; m_IKController->mvalidPseudoIKchains = false;
+	}
 
 	// Solve the foot IK position and orientation based on the height and normal of the terrain
 	//void solveFootIK(float leftHeight, float rightHeight, float lastLeftFoot, float lastRightFoot,

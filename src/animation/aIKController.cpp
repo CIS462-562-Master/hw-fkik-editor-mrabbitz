@@ -1,5 +1,6 @@
 #include "aIKController.h"
 #include "aActor.h"
+#include <Eigen\Dense>
 
 #pragma warning (disable : 4018)
 
@@ -147,8 +148,8 @@ AIKchain IKController::createIKchain(int endJointID, int desiredChainSize, ASkel
 		std::vector<double> weights;
 
 		int counter = 0;
-		AJoint *rootNode = m_pSkeleton->getRootNode();
-		AJoint *joint = m_pSkeleton->getJointByID(endJointID);
+		AJoint *rootNode = pSkeleton->getRootNode();
+		AJoint *joint = pSkeleton->getJointByID(endJointID);
 
 		while (counter < desiredChainSize)
 		{
@@ -267,6 +268,51 @@ int IKController::computeLimbIK(ATarget target, AIKchain& IKchain, const vec3 mi
 	// TODO: Implement the analytic/geometric IK method assuming a three joint limb  
 	// The actual position of the end joint should match the target position within some episilon error 
 	// the variable "midJointAxis" contains the rotation axis for the middle joint
+
+	//// Limb (Geometric) IK variables
+	//ATarget mTarget0;       // target associated with end joint
+	//ATarget mTarget1;       // target associated with middle joint - used to specify rotation of middle joint about end/base axis  
+	//AJoint* m_pEndJoint;    // Joint 2
+	//AJoint* m_pMiddleJoint; // Joint 1
+	//AJoint* m_pBaseJoint;   // Joint 0
+	//double m_length01;
+	//double m_length12;
+	//vec3 m_rotationAxis;    // axis of rotation for middle joint.  Values can be axisX, axisY or axisZ
+
+	m_pEndJoint = IKchain.getJoint(0);
+	m_pMiddleJoint = IKchain.getJoint(1);
+	m_pBaseJoint = IKchain.getJoint(2);
+
+	// Translation of joint w.r.t. it's parent => getLocalTranslation()
+	m_length01 = m_pMiddleJoint->getLocalTranslation().Length();
+	m_length12 = m_pEndJoint->getLocalTranslation().Length();
+	double Rd = (target.getGlobalTranslation() - m_pBaseJoint->getGlobalTranslation()).Length();
+
+	double cosPhi = (m_length01 * m_length01 + m_length12 * m_length12 - Rd * Rd) / (2.0 * m_length01 * m_length12);
+	// clamping between -1 and 1
+	cosPhi = cosPhi < -1.0 ? -1.0 : cosPhi > 1.0 ? 1.0 : cosPhi;
+
+	double theta2 = M_PI - acos(cosPhi);
+
+	m_pMiddleJoint->setLocalRotation(mat3::Rotation3D(midJointAxis, theta2));
+	m_pMiddleJoint->updateTransform();
+
+	vec3 targetVec = target.getGlobalTranslation() - m_pBaseJoint->getGlobalTranslation();
+	vec3 currentVec = m_pEndJoint->getGlobalTranslation() - m_pBaseJoint->getGlobalTranslation();
+
+	double cosAlpha = Dot(targetVec, currentVec) / (targetVec.Length() * currentVec.Length());
+	// clamping between -1 and 1
+	cosAlpha = cosAlpha < -1.0 ? -1.0 : cosAlpha > 1.0 ? 1.0 : cosAlpha;
+	double alpha = acos(cosAlpha);
+
+	vec3 rotationAxis = currentVec.Cross(targetVec).Normalize();
+
+	quat q;
+	q.FromAxisAngle(rotationAxis, alpha);
+
+	m_pBaseJoint->setLocalRotation(m_pBaseJoint->getLocalRotation() * q.ToRotation());
+	m_pBaseJoint->updateTransform();
+
 	return true;
 }
 
@@ -375,6 +421,33 @@ int IKController::computeCCDIK(ATarget target, AIKchain& IKchain, ASkeleton* pIK
 	// 3. compute desired change to local rotation matrix
 	// 4. set local rotation matrix to new value
 	// 5. update transforms for joint and all children
+
+	AJoint *endJoint = IKchain.getJoint(0);
+	AJoint *currJoint;
+	vec3 errorVec;
+
+	for (int i = 0; i < gIKmaxIterations; ++i)
+	{
+		for (int j = 1; j < IKchain.getSize(); ++j)
+		{
+			errorVec = target.getGlobalTranslation() - endJoint->getGlobalTranslation();
+			if (errorVec.Length() < gIKEpsilon)
+			{
+				return true;
+			}
+
+			currJoint = IKchain.getJoint(j);
+			vec3 r_jn = endJoint->getGlobalTranslation() - currJoint->getGlobalTranslation();
+
+			double angle = IKchain.getWeight(j) * r_jn.Cross(errorVec).Length() / (Dot(r_jn, r_jn) + Dot(r_jn, errorVec));
+			vec3 axis_Global = r_jn.Cross(errorVec).Normalize();
+			vec3 axis_Local = (currJoint->getGlobalRotation().Transpose() * axis_Global).Normalize();
+
+			currJoint->setLocalRotation(currJoint->getLocalRotation() * mat3::Rotation3D(axis_Local, angle));
+			currJoint->updateTransform();
+		}
+	}
+
 	return true;
 }
 
@@ -383,6 +456,99 @@ bool IKController::IKSolver_PseudoInv(int endJointID, const ATarget& target)
 {
 	// TODO: Implement Pseudo Inverse-based IK  
 	// The actual position of the end joint should match the target position after the skeleton is updated with the new joint angles
+
+	if (!mvalidPseudoIKchains)
+	{
+		mvalidPseudoIKchains = createPseudoIKchains();
+		if (!mvalidPseudoIKchains) { return false; }
+	}
+
+	// copy transforms from base skeleton
+	mIKSkeleton.copyTransforms(m_pSkeleton);
+
+	vec3 desiredRootPosition;
+
+	if (endJointID == mLhandID)
+	{
+		mLhandTarget = target;
+		computePseudoIK(mLhandTarget, mLhandIKchain, &mIKSkeleton);
+	}
+	else if (endJointID == mRhandID)
+	{
+		mRhandTarget = target;
+		computePseudoIK(mRhandTarget, mRhandIKchain, &mIKSkeleton);
+	}
+	else if (endJointID == mLfootID)
+	{
+		mLfootTarget = target;
+		computePseudoIK(mLfootTarget, mLfootIKchain, &mIKSkeleton);
+	}
+	else if (endJointID == mRfootID)
+	{
+		mRfootTarget = target;
+		computePseudoIK(mRfootTarget, mRfootIKchain, &mIKSkeleton);
+	}
+	else if (endJointID == mRootID)
+	{
+		desiredRootPosition = target.getGlobalTranslation();
+		mIKSkeleton.getJointByID(mRootID)->setLocalTranslation(desiredRootPosition);
+		mIKSkeleton.update();
+		computePseudoIK(mLhandTarget, mLhandIKchain, &mIKSkeleton);
+		computePseudoIK(mRhandTarget, mRhandIKchain, &mIKSkeleton);
+		computePseudoIK(mLfootTarget, mLfootIKchain, &mIKSkeleton);
+		computePseudoIK(mRfootTarget, mRfootIKchain, &mIKSkeleton);
+	}
+	else
+	{
+		mIKchain = createIKchain(endJointID, -1, &mIKSkeleton);
+		computePseudoIK(target, mIKchain, &mIKSkeleton);
+	}
+
+	// update IK Skeleton transforms
+	mIKSkeleton.update();
+
+	// copy IK skeleton transforms to main skeleton
+	m_pSkeleton->copyTransforms(&mIKSkeleton);
+
+	return true;
+}
+
+int IKController::createPseudoIKchains()
+{
+	bool validChains = false;
+	int desiredChainSize = 3;
+	//int desiredChainSize = -1;  // default of -1 creates IK chain of maximum length from end joint to child joint of root
+
+	// create IK chains for Lhand, Rhand, Lfoot and Rfoot 
+	mLhandIKchain = createIKchain(mLhandID, desiredChainSize, &mIKSkeleton);
+	mRhandIKchain = createIKchain(mRhandID, desiredChainSize, &mIKSkeleton);
+	mLfootIKchain = createIKchain(mLfootID, desiredChainSize, &mIKSkeleton);
+	mRfootIKchain = createIKchain(mRfootID, desiredChainSize, &mIKSkeleton);
+
+	if (mLhandIKchain.getSize() == 3 && mRhandIKchain.getSize() == 3 && mLfootIKchain.getSize() == 3 && mRfootIKchain.getSize() == 3)
+	//if (mLhandIKchain.getSize() > 1 && mRhandIKchain.getSize() > 1 && mLfootIKchain.getSize() > 1 && mRfootIKchain.getSize() > 1)
+	{
+		validChains = true;
+
+		// initalize end joint target transforms for Lhand, Rhand, Lfoot and Rfoot based on current position and orientation of joints
+		mIKSkeleton.copyTransforms(m_pSkeleton);
+		mLhandTarget.setLocal2Global(mIKSkeleton.getJointByID(mLhandID)->getLocal2Global());
+		mRhandTarget.setLocal2Global(mIKSkeleton.getJointByID(mRhandID)->getLocal2Global());
+		mLfootTarget.setLocal2Global(mIKSkeleton.getJointByID(mLfootID)->getLocal2Global());
+		mRfootTarget.setLocal2Global(mIKSkeleton.getJointByID(mRfootID)->getLocal2Global());
+	}
+
+	return validChains;
+}
+
+int IKController::computePseudoIK(ATarget target, AIKchain& IKchain, ASkeleton* pIKSkeleton)
+{
+	// Need to figure this out next
+	Eigen::MatrixXd L(3, 3);
+	L << 1.0, -3.0, 3.0,
+		0.0, 3.0, -6.0,
+		0.0, 0.0, 3.0;
+
 	return true;
 }
 
