@@ -557,18 +557,32 @@ int IKController::computePseudoIK(ATarget target, AIKchain& IKchain, ASkeleton* 
 
 	std::vector<Eigen::MatrixXd> J_Vec;
 
+	double cosX, cosY, sinX, sinY;
+
 	for (int i = 1; i < IKchain.getSize(); ++i)
 	{
 		currJoint = IKchain.getJoint(i);
 		vec3 eulerAngles;
 		currJoint->getLocalRotation().ToEulerAngles(mat3::ZYX, eulerAngles);
 
-		L <<	1.0, 0.0					, -sin(eulerAngles[1])						,
-				0.0, cos(eulerAngles[0])	, sin(eulerAngles[0]) * cos(eulerAngles[1])	,
-				0.0, -sin(eulerAngles[0])	, cos(eulerAngles[0]) * cos(eulerAngles[1])	;
+		std::cout << eulerAngles[0] << std::endl << eulerAngles[1] << std::endl << eulerAngles[2] << std::endl;
+
+		cosX = cos(eulerAngles[0]);
+		cosY = cos(eulerAngles[1]);
+		sinX = sin(eulerAngles[0]);
+		sinY = sin(eulerAngles[1]);
+
+		L <<	1.0,  0.0	, -sinY,
+				0.0,  cosX	,  sinX * cosY,
+				0.0, -sinX	,  cosX * cosY;
+
+		std::cout << L << std::endl;
 
 		r_0_jn = endJoint->getGlobalTranslation() - currJoint->getGlobalTranslation();
-		R_0_j = currJoint->getGlobalRotation();
+		R_0_j = currJoint->getGlobalRotation().Transpose();
+
+		std::cout << R_0_j << std::endl;
+		std::cout << r_0_jn << std::endl;
 
 		b_x = R_0_j[0].Cross(r_0_jn);
 		b_y = R_0_j[1].Cross(r_0_jn);
@@ -578,31 +592,57 @@ int IKController::computePseudoIK(ATarget target, AIKchain& IKchain, ASkeleton* 
 				b_x[1], b_y[1], b_z[1],
 				b_x[2], b_y[2], b_z[2];
 
+		std::cout << B << std::endl;
+
 		J_Vec.push_back(B * L);
 	}
 
 	Eigen::MatrixXd J(3, 0);
 	Eigen::MatrixXd currentJ;
 
-	for (int i =  J_Vec.size() - 1; i >= 0; --i)
+	for (int i = J_Vec.size() - 1; i >= 0; --i)
 	{
 		currentJ = J_Vec[i];
 		J.conservativeResize(J.rows(), J.cols() + currentJ.cols());
 		J.rightCols(currentJ.cols()) = currentJ;
+
+		std::cout << currentJ << std::endl;
+		std::cout << J << std::endl;
 	}
 
 	// Left Pseudo Inverse
 	// We are doing limb joints, so we only have 2 joints to rotate
 	// if (J_Vec.size() < 4)
-	Eigen::MatrixXd JPseduo = (J.transpose() * J).inverse() * J.transpose();	// should be 2 X 3
+	Eigen::MatrixXd JPseduo;// = (J.transpose() * J).inverse() * J.transpose();	// should be 2 X 3
+	Eigen::MatrixXd J0, J1;
+	J0 = J.transpose() * J;
+	std::cout << J0 << std::endl << std::endl;
+	J1 = J0.inverse();
+	std::cout << J1 << std::endl << std::endl;
+	JPseduo = J1 * J.transpose();
+	std::cout << JPseduo << std::endl << std::endl;
 
 	vec3 endJoint_Translation = target.getGlobalTranslation() - endJoint->getGlobalTranslation();
 
 	Eigen::Vector3d v;
 	v << endJoint_Translation[0], endJoint_Translation[1], endJoint_Translation[2];
+	std::cout << v << std::endl << std::endl;
 
-	//Eigen::Vector2d angles_Previous;
-	//angles_Previous << IKchain.getJoint(2)
+	vec3 eulerAnglesShoulder;
+	IKchain.getJoint(2)->getLocalRotation().ToEulerAngles(mat3::ZYX, eulerAnglesShoulder);
+	vec3 eulerAnglesElbow;
+	IKchain.getJoint(1)->getLocalRotation().ToEulerAngles(mat3::ZYX, eulerAnglesElbow);
+
+	Eigen::VectorXd angles_Previous(6);
+	angles_Previous <<	eulerAnglesShoulder[0], eulerAnglesShoulder[1], eulerAnglesShoulder[2],
+						eulerAnglesElbow[0],	eulerAnglesElbow[1],	eulerAnglesElbow[2];
+
+	std::cout << angles_Previous << std::endl << std::endl;
+
+	Eigen::VectorXd result = angles_Previous + (JPseduo * v);
+
+	eulerAnglesShoulder = vec3(result(0), result(1), result(2));
+	eulerAnglesElbow = vec3(result(3), result(4), result(5));
 
 	return true;
 }
