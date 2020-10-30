@@ -501,7 +501,8 @@ bool IKController::IKSolver_PseudoInv(int endJointID, const ATarget& target)
 	}
 	else
 	{
-		mIKchain = createIKchain(endJointID, -1, &mIKSkeleton);
+		mIKchain = createIKchain(endJointID, 3, &mIKSkeleton);
+		//mIKchain = createIKchain(endJointID, -1, &mIKSkeleton);
 		computePseudoIK(target, mIKchain, &mIKSkeleton);
 	}
 
@@ -544,11 +545,64 @@ int IKController::createPseudoIKchains()
 
 int IKController::computePseudoIK(ATarget target, AIKchain& IKchain, ASkeleton* pIKSkeleton)
 {
+	AJoint *endJoint = IKchain.getJoint(0);
+	AJoint *currJoint;
 	// Need to figure this out next
 	Eigen::MatrixXd L(3, 3);
-	L << 1.0, -3.0, 3.0,
-		0.0, 3.0, -6.0,
-		0.0, 0.0, 3.0;
+
+	Eigen::MatrixXd B(3, 3);
+	vec3 r_0_jn;
+	mat3 R_0_j;
+	vec3 b_x, b_y, b_z;
+
+	std::vector<Eigen::MatrixXd> J_Vec;
+
+	for (int i = 1; i < IKchain.getSize(); ++i)
+	{
+		currJoint = IKchain.getJoint(i);
+		vec3 eulerAngles;
+		currJoint->getLocalRotation().ToEulerAngles(mat3::ZYX, eulerAngles);
+
+		L <<	1.0, 0.0					, -sin(eulerAngles[1])						,
+				0.0, cos(eulerAngles[0])	, sin(eulerAngles[0]) * cos(eulerAngles[1])	,
+				0.0, -sin(eulerAngles[0])	, cos(eulerAngles[0]) * cos(eulerAngles[1])	;
+
+		r_0_jn = endJoint->getGlobalTranslation() - currJoint->getGlobalTranslation();
+		R_0_j = currJoint->getGlobalRotation();
+
+		b_x = R_0_j[0].Cross(r_0_jn);
+		b_y = R_0_j[1].Cross(r_0_jn);
+		b_z = R_0_j[2].Cross(r_0_jn);
+
+		B <<	b_x[0], b_y[0], b_z[0],
+				b_x[1], b_y[1], b_z[1],
+				b_x[2], b_y[2], b_z[2];
+
+		J_Vec.push_back(B * L);
+	}
+
+	Eigen::MatrixXd J(3, 0);
+	Eigen::MatrixXd currentJ;
+
+	for (int i =  J_Vec.size() - 1; i >= 0; --i)
+	{
+		currentJ = J_Vec[i];
+		J.conservativeResize(J.rows(), J.cols() + currentJ.cols());
+		J.rightCols(currentJ.cols()) = currentJ;
+	}
+
+	// Left Pseudo Inverse
+	// We are doing limb joints, so we only have 2 joints to rotate
+	// if (J_Vec.size() < 4)
+	Eigen::MatrixXd JPseduo = (J.transpose() * J).inverse() * J.transpose();	// should be 2 X 3
+
+	vec3 endJoint_Translation = target.getGlobalTranslation() - endJoint->getGlobalTranslation();
+
+	Eigen::Vector3d v;
+	v << endJoint_Translation[0], endJoint_Translation[1], endJoint_Translation[2];
+
+	//Eigen::Vector2d angles_Previous;
+	//angles_Previous << IKchain.getJoint(2)
 
 	return true;
 }
